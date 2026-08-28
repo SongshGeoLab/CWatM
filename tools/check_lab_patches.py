@@ -78,45 +78,12 @@ if _conflicted:
     sys.exit(1)
 
 
-# --- P1: cropGroupNumber-based depletion fraction -------------------------
-
+# --- P1: WITHDRAWN -------------------------------------------------------
+# The cropGroupNumber depletion-fraction change was reverted (option B): the
+# first term was crop-group dependent while the second stayed hardcoded to the
+# n_cg = 1 special case, and the two could not be reconciled without adopting
+# the general Van Diepen form. Both files now match upstream. See LAB_CHANGES.md.
 irr = read(IRRIGATION)
-
-check(
-    bool(re.search(r"self\.var\.cropGroupNumber\s*=\s*loadmap\(\s*['\"]cropgroupnumber['\"]\s*\)", irr)),
-    "P1",
-    f"{IRRIGATION}: initial() must load 'cropgroupnumber'",
-)
-
-irr_p = [ln for ln in active_lines(irr) if re.match(r"\s*p\s*=\s*1\s*/\s*\(\s*0\.76", ln)]
-check(
-    len(irr_p) == 1 and CROP_GROUP_TERM in squash(irr_p[0]),
-    "P1",
-    f"{IRRIGATION}: the active p formula must use cropGroupNumber, not the fixed -0.4"
-    + (f" (found: {irr_p[0].strip()!r})" if irr_p else " (no p formula found)"),
-)
-
-# soil.py: only the IRRIGATED branch is ours. Upstream's non-irrigated branch
-# uses the same expression, so scope the check to the if-block.
-soil = read(SOIL)
-# Anchor on the combined irrPaddy-or-irrNonPaddy test: soil.py has an earlier
-# `if coverType == 'irrPaddy':` block (paddy flooding) with no p formula in it.
-m = re.search(
-    r"if\s+coverType\s*==\s*['\"]irrPaddy['\"]\s+or\s+coverType\s*==\s*['\"]irrNonPaddy['\"]\s*:\n"
-    r"(?P<body>.*?)\n\s*else:",
-    soil,
-    re.DOTALL,
-)
-if m is None:
-    check(False, "P1", f"{SOIL}: could not locate the irrPaddy/irrNonPaddy branch")
-else:
-    soil_p = [ln for ln in active_lines(m.group("body")) if re.match(r"\s*p\s*=\s*1\s*/\s*\(\s*0\.76", ln)]
-    check(
-        len(soil_p) == 1 and CROP_GROUP_TERM in squash(soil_p[0]),
-        "P1",
-        f"{SOIL}: the irrigated branch's p formula must use cropGroupNumber"
-        + (f" (found: {soil_p[0].strip()!r})" if soil_p else " (no p formula in that branch)"),
-    )
 
 # --- P2: swAbstractionFrac array guard -----------------------------------
 

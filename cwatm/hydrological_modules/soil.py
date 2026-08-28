@@ -352,9 +352,7 @@ class soil(object):
 
         if coverType == 'irrPaddy' or coverType == 'irrNonPaddy':
 
-            #p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
-            # commit the above line and uncomment the below line to use the crop group number for irrigated crops as well
-            p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
+            p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
             # soil water depletion fraction (easily available soil water) # Van Diepen et al., 1988: WOFOST 6.0, p.87.
             p = p + (etpotMax - 0.6) / 4
             # correction for crop group 1  (Van Diepen et al, 1988) -> p between 0.14 - 0.77
