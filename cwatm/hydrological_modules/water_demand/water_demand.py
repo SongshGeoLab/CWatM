@@ -726,7 +726,12 @@ class water_demand:
             # estimates of fractions of groundwater and surface water abstractions
             swAbstractionFraction = loadmap('swAbstractionFrac')
 
-            if swAbstractionFraction < 0:
+            # lab P2: loadmap returns a scalar for a number but an array for a netCDF/
+            # GeoTIFF map. The bare comparison raises
+            #   ValueError: truth value of an array with more than one element is ambiguous
+            # in the latter case. np.asarray keeps np.float32 scalars working too --
+            # isinstance(x, float) does not. Upstream is still unfixed; see LAB_CHANGES.md P2.
+            if np.min(np.asarray(swAbstractionFraction)) < 0:
 
                 averageBaseflowInput = loadmap('averageBaseflow')
                 averageDischargeInput = loadmap('averageDischarge')

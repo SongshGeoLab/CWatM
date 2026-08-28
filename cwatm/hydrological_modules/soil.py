@@ -403,10 +403,15 @@ class soil(object):
 
         if coverType == 'irrPaddy' or coverType == 'irrNonPaddy':
 
-            p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
+            # upstream: p = 1 / (0.76 + 1.5 * etpotMax) - 0.4   (fixed at crop group 1)
+            # lab P1: use the actual crop group number for irrigated covers too.
+            p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
             # soil water depletion fraction (easily available soil water) # Van Diepen et al., 1988: WOFOST 6.0, p.87.
-            p = p + (etpotMax - 0.6) / 4
-            # correction for crop group 1  (Van Diepen et al, 1988) -> p between 0.14 - 0.77
+            # upstream: p = p + (etpotMax - 0.6) / 4   (4 = 1 * (1 + 3), also the crop group 1 case)
+            p = np.where(self.var.cropGroupNumber <= 2.5,
+                         p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
+            # correction for crop groups 1 and 2 (Van Diepen et al, 1988)
+            # -- identical to the non-irrigated branch below; see LAB_CHANGES.md P1
             # The crop group number is a indicator of adaptation to dry climate,
             # e.g. olive groves are adapted to dry climate, therefore they can extract more water from drying out 
             # soil than e.g. rice. The crop group number of olive groves is 4 and of rice fields is 1
