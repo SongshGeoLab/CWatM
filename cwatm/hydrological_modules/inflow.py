@@ -136,7 +136,7 @@ class inflow(object):
                     file.close()
                     skiplines = 3 + no
                 except:
-                    msg = "Error 218: Mistake reading inflow file\n"
+                    msg = "Error 218: Mistake reading inflow file. Maybe check if the encoding is utf-8 BOM?\n"
                     raise CWATMFileError(os.path.join(inDir,name), sname=name)
 
                 tempTssData = np.genfromtxt(filename, skip_header=skiplines, names=names, usecols=names[1:], filling_values=0.0)
