@@ -162,6 +162,64 @@ pot_irrConsumption[3] = np.minimum(pot_irrConsumption[3], potInf)
 
 ---
 
+## ⚠️ settings.ini 迁移清单（第一次合并超过 2024-04 时必须处理）
+
+好消息：上游自带的率定模板 `Toolkit/Calibration/templates_CWatM/settings_CWatM_template.ini` 从基线到 develop **只多了一个键**。坏消息：就是这一个键，不加会静默打断率定。
+
+### 必须添加
+
+```ini
+[OPTIONS]
+reportOldTss = True
+```
+
+**原因**：上游 `328313c`（2024-04-29）把时间序列输出的默认格式从 PCRaster `.tss` 改成了带真实日期的 `.csv`。
+
+```python
+# output.py
+newcsvformat = True                                   # ← 缺省即新格式
+suffix = ".csv"
+if 'reportOldTss' in option:
+    newcsvformat = not(checkOption('reportOldTss'))
+if not(newcsvformat):
+    suffix = ".tss"
+```
+
+**为什么这会打断率定**：`cwatm-cali` 的 `calibration_partial.py` 硬编码了旧格式：
+
+```python
+dischargetss = 'discharge_daily.tss'                              # :79
+if os.path.exists(os.path.join(directory_run, dischargetss)):     # :232
+simulated_streamflow = pandas.read_csv(
+    Qsim_tss, sep=r"\s+", index_col=0, skiprows=4, header=None)   # :285
+```
+
+不加 `reportOldTss = True` 的后果：文件名变成 `discharge_daily.csv`，`os.path.exists` 恒为 False，**所有率定运行都被判为失败**，而不是报错退出。若只改文件名不改解析器，`sep=r"\s+"` + `skiprows=4` + `header=None` 会错误解析带日期的逗号分隔文件。
+
+**两个选择**：(a) 加 `reportOldTss = True` 保持旧格式，率定脚本不动（推荐，改动最小）；(b) 改用新 CSV 格式，同步改 `calibration_partial.py:75,79,285`。
+
+### 必须删除（已从 OPTION 移除，成为死条目）
+
+`328313c` 把前三项变成默认行为并从 OPTION 里删掉；`sumWaterBalance` 随 `waterbalance.py` 一起消失：
+
+```ini
+writeNetcdfStack = True     # 删
+reportMap = True            # 删
+reportTss = True            # 删
+sumWaterBalance = ...       # 删（CP4 之后）
+```
+
+### 同时注意（不影响 ini，但影响后处理）
+
+`328313c` 还把月/年 netCDF 的时间单位从 `"Month since ..."` 改成 `"Day since ..."` 并取周期首日（pandas 不认前者）。任何读月尺度 netCDF 的后处理脚本要复核。
+
+### 已核实的非问题
+
+- `MaskMap` **没有**被移除，develop 仍用 `loadsetclone(self, 'MaskMap')`（`cwatm_initial.py:307`）。
+- `fraction_IncreaseIrrigation_Nonpaddy`、`alphaDepletion`、`cropgroupnumber` 在 develop 中语义不变。
+
+---
+
 ## 同步纪律
 
 1. **PR 默认打向父仓库。** 从本 fork 开 PR，base 默认是 `iiasa/CWatM`；若从 `lab/main` 开，等于公开向上游提交 P1。PR 分支一律从 `upstream/develop` 切，`gh pr create` 永远显式带 `--repo` 和 `--base`。GitHub 没有服务端开关。
