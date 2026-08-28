@@ -1,0 +1,9 @@
+#waste Basin code = yrb
+
+lateral bounds 		= 15 55
+longitudinal bounds 	= 70 140
+
+Desired resolution = 1/2
+
+#this_line_for_path E:\CWM_YRB_2022\data\yr_1km\raw_data\climate\merge\
+#need_to_be_end_with_'/'
