@@ -588,8 +588,14 @@ class water_demand:
             # partitioning based on local average baseflow (m3/s) and upstream average discharge (m3/s)
             # estimates of fractions of groundwater and surface water abstractions
             swAbstractionFraction = loadmap('swAbstractionFrac')
-
-            if swAbstractionFraction < 0:
+            
+            # 判断swAbstractionFraction是否是一个浮点数
+            if isinstance(swAbstractionFraction, float):
+                min_swAbstractionFraction = swAbstractionFraction
+            else:
+                min_swAbstractionFraction = np.min(swAbstractionFraction)
+                
+            if min_swAbstractionFraction < 0:
 
                 averageBaseflowInput = loadmap('averageBaseflow')
                 averageDischargeInput = loadmap('averageDischarge')
