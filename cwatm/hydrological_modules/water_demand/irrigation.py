@@ -184,8 +184,10 @@ class waterdemand_irrigation:
         p = 1 / (0.76 + 1.5 * np.minimum(0.1 * (self.var.totalPotET[No] * 1000.), 1.0)) - 0.10 * ( 5 - self.var.cropGroupNumber)
         # p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
         # soil water depletion fraction (easily available soil water) # Van Diepen et al., 1988: WOFOST 6.0, p.87.
-        p = p + (etpotMax - 0.6) / 4
-        # correction for crop group 1  (Van Diepen et al, 1988) -> p between 0.14 - 0.77
+        p = np.where(self.var.cropGroupNumber <= 2.5,
+                     p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
+        # correction for crop groups 1 and 2 (Van Diepen et al, 1988)
+        # -- matches soil.py and upstream's own non-irrigated branch; see LAB_CHANGES.md P1
         p = np.maximum(np.minimum(p, 1.0), 0.)
         # p is between 0 and 1 => if p =1 wcrit = wwp, if p= 0 wcrit = wfc
         # p is closer to 0 if evapo is bigger and cropgroup is smaller
