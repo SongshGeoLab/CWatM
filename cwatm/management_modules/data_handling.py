@@ -1402,12 +1402,14 @@ def writenetcdf(netfile,prename,addname,varunits,inputmap, timeStamp, posCnt, fl
                     lon = nf1.createDimension('lon', col)
                     longitude = nf1.createVariable('lon', 'f8', ('lon',))
                     for i in metadataNCDF['lon']:
-                        exec('%s="%s"' % ("longitude." + i, metadataNCDF['lon'][i]))
+                        if i != '_FillValue':
+                            exec('%s="%s"' % ("longitude." + i, metadataNCDF['lon'][i]))
                 if 'lat' in list(metadataNCDF.keys()):
                     lat = nf1.createDimension('lat', row)  # x 950
                     latitude = nf1.createVariable('lat', 'f8', 'lat')
                     for i in metadataNCDF['lat']:
-                        exec('%s="%s"' % ("latitude." + i, metadataNCDF['lat'][i]))
+                        if i != '_FillValue':
+                            exec('%s="%s"' % ("latitude." + i, metadataNCDF['lat'][i]))
         # projection
         if 'laea' in list(metadataNCDF.keys()):
             proj = nf1.createVariable('laea', 'i4')
