@@ -1,5 +1,9 @@
 name: workflow uploading Codecov
-on: [push]
+# SongshGeoLab fork: 原本是 on: [push]，已停用。
+# 它需要 secrets.CODECOV_TOKEN（fork 上没有）且 fail_ci_if_error: true，
+# 所以每次 push 必然红叉。它其实也不跑任何测试——只是把仓库里已提交的
+# coverage.xml 上传上去。改为仅手动触发。
+on: workflow_dispatch
 jobs:
   run:
     runs-on: ${{ matrix.os }}

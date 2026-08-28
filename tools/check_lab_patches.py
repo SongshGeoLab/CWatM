@@ -3,12 +3,21 @@
 
 Run after `git merge upstream/develop`, before `--ff-only` into lab/main.
 A merge can resolve cleanly and still drop a patch, so this is not optional.
+The 2026-08 re-baseline proved the point: soil.py and water_demand.py merged
+"cleanly" while irrigation.py and inflow.py conflicted -- a clean merge tells
+you nothing about whether the patch survived.
 
     python3 tools/check_lab_patches.py
 
 Exit 0 = all patches intact. Exit 1 = at least one is missing or altered.
 
-Deliberately not a grep: soil.py contains the same crop-group expression twice
+The strongest check is the DEVIATION SURFACE: `git diff upstream/develop --
+cwatm/` must touch exactly the four patched files and nothing else. That
+catches what the per-patch patterns below cannot -- an accidental edit, a
+half-resolved merge hunk, a stray upstream file left behind. It needs the
+`upstream` remote fetched, and is skipped with a warning if it is not.
+
+The per-patch patterns are deliberately not a grep: soil.py contains the same crop-group expression twice
 (the irrigated branch, which is ours, and upstream's own non-irrigated branch),
 and irrigation.py writes `( 5 -` with a space that a naive pattern misses.
 Checks are whitespace-insensitive and scoped to the right branch.
@@ -17,6 +26,7 @@ Checks are whitespace-insensitive and scoped to the right branch.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,6 +56,11 @@ IRRIGATION = "cwatm/hydrological_modules/water_demand/irrigation.py"
 SOIL = "cwatm/hydrological_modules/soil.py"
 WATER_DEMAND = "cwatm/hydrological_modules/water_demand/water_demand.py"
 DATA_HANDLING = "cwatm/management_modules/data_handling.py"
+INFLOW = "cwatm/hydrological_modules/inflow.py"
+
+# The exact set of files this fork may differ from upstream/develop in.
+UPSTREAM_REF = "upstream/develop"
+EXPECTED_DEVIATION = {IRRIGATION, SOIL, WATER_DEMAND, INFLOW}
 
 CROP_GROUP_TERM = squash("- 0.10 * (5 - self.var.cropGroupNumber)")
 FIXED_TERM = squash("- 0.4")
@@ -76,6 +91,39 @@ if _conflicted:
     for rel in _conflicted:
         print(f"  {rel}")
     sys.exit(1)
+
+
+# --- deviation surface ----------------------------------------------------
+# The strongest check there is: our tree may differ from upstream/develop in
+# exactly four files under cwatm/, and no others. Anything else -- an editor
+# stray, a half-resolved merge hunk, an upstream file we forgot to take -- is
+# caught here even when every pattern below still matches.
+
+_diff = subprocess.run(
+    ["git", "diff", "--name-only", UPSTREAM_REF, "--", "cwatm/"],
+    cwd=ROOT, capture_output=True, text=True,
+)
+if _diff.returncode != 0:
+    print(
+        f"WARN  surface  cannot compare against {UPSTREAM_REF}"
+        f" ({_diff.stderr.strip().splitlines()[-1] if _diff.stderr.strip() else 'unknown error'})."
+        "\n                Run `git fetch upstream` to enable the strongest check."
+    )
+else:
+    actual = {ln for ln in _diff.stdout.split() if ln}
+    extra = sorted(actual - EXPECTED_DEVIATION)
+    missing = sorted(EXPECTED_DEVIATION - actual)
+    detail = ""
+    if extra:
+        detail += f" unexpected: {extra}"
+    if missing:
+        detail += f" no longer deviating (patch dropped?): {missing}"
+    check(
+        not extra and not missing,
+        "surface",
+        f"cwatm/ must differ from {UPSTREAM_REF} in exactly the four patched"
+        f" files.{detail}",
+    )
 
 
 # --- P1: cropGroupNumber-based depletion fraction -------------------------
@@ -141,21 +189,42 @@ for label, text, scope in (
 # --- P2: swAbstractionFrac array guard -----------------------------------
 
 wd = read(WATER_DEMAND)
+wd_cmp = [ln for ln in active_lines(wd) if re.search(r"swAbstractionFraction\b.*<\s*0", ln)]
 check(
-    "min_swAbstractionFraction" in wd or bool(re.search(r"np\.min\(.*swAbstractionFraction", wd)),
+    len(wd_cmp) == 1 and "np.min(np.asarray(" in wd_cmp[0],
     "P2",
-    f"{WATER_DEMAND}: swAbstractionFrac must be reduced to a scalar before '< 0'",
+    f"{WATER_DEMAND}: swAbstractionFrac must be reduced with np.min(np.asarray(...))"
+    " before the '< 0' comparison. A bare comparison raises ValueError when the"
+    " setting points at a map; isinstance(x, float) misses np.float32"
+    + (f" (found: {[x.strip() for x in wd_cmp]})" if wd_cmp else " (comparison not found)"),
 )
 
-# --- P3: _FillValue guard (drop this check when the patch is dropped) ----
+# --- P3: dropped at the 2026-08 re-baseline -------------------------------
+# Upstream now filters _FillValue at the source, where metadataNCDF is built
+# (data_handling.py:869, a dict comprehension), so our writenetcdf-side guard
+# is redundant and no longer applied. What is worth checking is that upstream
+# does not REGRESS that fix -- without it, writing netCDF crashes on any input
+# that carries the attribute.
 
 dh = read(DATA_HANDLING)
 check(
-    dh.count("if i != '_FillValue':") >= 2,
+    bool(re.search(r"metadataNCDF\[var\]\s*=\s*\{.*_FillValue", dh)),
     "P3",
-    f"{DATA_HANDLING}: lon/lat attribute loops must skip _FillValue"
-    " -- if upstream now filters it in metadataNCDF, drop P3 and this check",
+    f"{DATA_HANDLING}: upstream must still filter _FillValue when building"
+    " metadataNCDF. If that fix is gone, re-apply the old lab-side guard"
+    " (see LAB_CHANGES.md P3)",
 )
+
+
+# --- P4: inflow utf-8 BOM hint --------------------------------------------
+
+inf = read(INFLOW)
+check(
+    "utf-8 BOM" in inf,
+    "P4",
+    f"{INFLOW}: the Error 218 message must keep the utf-8 BOM hint",
+)
+
 
 # --- CP1: satAreaFrac / arnoBeta -----------------------------------------
 

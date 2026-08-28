@@ -1,3 +1,21 @@
+# Community Water Model (CWatM) — SongshGeoLab fork
+
+> **这是 [iiasa/CWatM](https://github.com/iiasa/CWatM) 的实验室 fork，不是上游仓库。**
+>
+> - 上游基线：`develop` @ `32cae7d`（2026-08-28）
+> - 工作分支：`lab/main`
+> - **相对上游的全部偏离见 [`LAB_CHANGES.md`](LAB_CHANGES.md)**，共 4 个文件、约 40 行。
+>   `git diff upstream/develop -- cwatm/` 就是完整的偏离清单，
+>   由 `python3 tools/check_lab_patches.py` 机器校验（每次合并上游后必跑）。
+> - 唯一的科学改动是 P1（灌溉地类的土壤水分消耗系数 `p` 改用作物组数），
+>   **永不提交上游**。从本 fork 开 PR 时 base 默认指向 `iiasa/CWatM`，
+>   务必显式带 `--repo` 和 `--base`。
+> - 依赖见本仓库重写过的 `requirements.txt`（上游那份是陈旧的）。
+>
+> 以下为上游原始 README。
+
+---
+
 # Community Water Model (CWatM)
 
 [![GitHub last commit](https://img.shields.io/github/last-commit/iiasa/CWatM/develop)]

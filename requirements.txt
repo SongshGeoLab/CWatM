@@ -1,12 +1,27 @@
-numpy
+# SongshGeoLab fork of CWatM — 依赖清单
+#
+# 上游 develop 自带的 requirements.txt 是陈旧的：从 2024-01 至今一字未改，
+# 仍写着 gdal 和 Python 3.8，而 develop 早已（上游 6ae8b68, 2026-05-18）
+# 全面转用 rasterio，且 pandas 是硬依赖却从未列出。本文件是重写后的实际清单。
+#
+# Python >= 3.10（上游 CI 用 3.10；4f3f490 声明适配 numpy 2.1 / Python 3.12.7）
+
+# --- 核心运行时（必需）---
+numpy>=2.0
 scipy
 netCDF4
-gdal
-flopy 3.3.2
-xmipy
+rasterio          # 替代 gdal；data_handling.py 全面使用
+pandas            # output.py / snow_frost.py / run_cwatm.py 顶层 import
 
-Python 3.8
+# --- 按功能启用（可选）---
+openpyxl          # 读 Excel：水库信息、调水规则、作物表
+                  #   (initcondition.py, lakes_reservoirs.py 的 pd.read_excel)
+# flopy==3.3.2    # 仅 modflow_coupling = True 时；run_cwatm.py:64-67 条件导入
+# xmipy           # 同上
+# tqdm            # 仅 usepySnowClim = True 时；pySnowClim/snowclim_model.py
+# xarray, metpy   # 仅 pySnowClim 的独立预处理脚本，模型主流程不导入
 
-mingw64 installed manually and then installed to the path (see https://www.programmersought.com/article/7052573717/)
-
-ModFlow6 dll: libmf6.dll in the "cwatm" folder
+# --- 备注 ---
+# ModFlow6 dll: libmf6.dll 放在 "cwatm" 目录下（仅 modflow 耦合时需要）
+# 本 fork 不提供 setup.py / pyproject.toml——上游在 b2e5aff 删除了 setup.py
+# 且未替代，CWatM 不是 pip 可安装包，直接 `python run_cwatm.py <settings>` 运行。

@@ -1,13 +1,16 @@
 name: Generate Version File
 
 # PB 01/09/25 
+# SongshGeoLab fork: lab/main 加入触发分支。不加的话 workflow 永不触发，
+# cwatm/version.py 会永远停在上游的 hash 和提交者，而这些会被写进本实验室
+# 输出 netCDF 与 CSV 表头的 metadata（output.py:852）——溯源信息就是错的。
 # creates a version file to be read by cwatm with the github hash
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, lab/main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, lab/main ]
 
 jobs:
   generate-version:

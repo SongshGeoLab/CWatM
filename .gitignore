@@ -48,3 +48,7 @@ cwatm/hydrological_modules/.DS_Store
 cwatm/hydrological_modules/routing_reservoirs/.DS_Store
 cwatm/management_modules/.DS_Store
 .idea/
+
+# --- SongshGeoLab fork ---
+# 重基线前后的参照运行输出，用于回归对比，不入版本库
+reference/
