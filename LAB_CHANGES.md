@@ -42,16 +42,36 @@ p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
 > p = p + (etpotMax - 0.6) / 4      # 未改
 > ```
 >
-> Van Diepen 通用式分母是 `n_cg · (n_cg + 3)`，`4` 正是 `n_cg = 1` 时的 `1 × (1+3)`。上游把通用形式作为注释保留在 `irrigation.py`：
+> Van Diepen 通用式分母是 `n_cg · (n_cg + 3)`，`4` 正是 `n_cg = 1` 时的 `1 × (1+3)`。
+>
+> **决定性证据在同一个函数里**：`soil.py` 的**非灌溉分支**（`else`，:367-373）本来就用通用式，而 P1 所在的**灌溉分支**（:357-359）第二项仍是 `/4`：
 >
 > ```python
-> # p = np.where(cropGroupNumber <= 2.5,
-> #              p + (etpotMax - 0.6) / (cropGroupNumber * (cropGroupNumber + 3)), p)
+> if coverType == 'irrPaddy' or coverType == 'irrNonPaddy':
+>     p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)   # ← P1 改了
+>     p = p + (etpotMax - 0.6) / 4                                             # ← 仍是 n_cg=1 特例
+> else:
+>     p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
+>     p = np.where(self.var.cropGroupNumber <= 2.5,
+>                  p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
 > ```
 >
-> 现状是第一项按真实作物组算、第二项按水稻算。取 `etpotMax = 1.0, n_cg = 4`：正确修正 `0.4/28 = 0.014`，当前给出 `0.4/4 = 0.100`，p 偏高 0.086 → `wCrit` 偏低 → 灌溉触发被推迟。
+> P1 之前两个分支各自自洽（灌溉用 `-0.4` + `/4`，都是 n_cg=1）；P1 之后灌溉分支变成第一项按真实作物组算、第二项按水稻算。取 `etpotMax = 1.0, n_cg = 4`：正确修正 `0.4/28 = 0.014`，当前给出 `0.4/4 = 0.100`，p 偏高 0.086 → `wCrit` 偏低 → 灌溉触发被推迟。
 >
-> **两个选项**：(a) 第二项一并改成通用式；(b) 退回 `- 0.4` 保持内部一致。**尚未决定。**
+> **两个选项**：
+>
+> (a) **对齐 else 分支**（推荐，代码就在 6 行之下）：
+>
+> ```python
+> p = np.where(self.var.cropGroupNumber <= 2.5,
+>              p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
+> ```
+>
+> `irrigation.py` 同样位置也要改（上游已把该式作为注释留在 `irrigation.py`）。
+>
+> (b) 退回 `- 0.4` + `/4`，即放弃 P1。
+>
+> **尚未决定。CP1 重新率定之前必须定夺**，否则率定的是一个内部不自洽的公式。
 
 ---
 
@@ -145,14 +165,14 @@ pot_irrConsumption[3] = np.minimum(pot_irrConsumption[3], potInf)
 ## 同步纪律
 
 1. **PR 默认打向父仓库。** 从本 fork 开 PR，base 默认是 `iiasa/CWatM`；若从 `lab/main` 开，等于公开向上游提交 P1。PR 分支一律从 `upstream/develop` 切，`gh pr create` 永远显式带 `--repo` 和 `--base`。GitHub 没有服务端开关。
-2. **每次 merge 上游后必须验证 P1 存活**：
+2. **每次 merge 上游后、`--ff-only` 之前，必须跑补丁存活校验**：
 
    ```bash
-   grep -n "0.10 \* (5 - self.var.cropGroupNumber)" \
-     cwatm/hydrological_modules/soil.py \
-     cwatm/hydrological_modules/water_demand/irrigation.py
+   python3 tools/check_lab_patches.py
    ```
 
-   必须两个文件都命中。merge 可以干净解决却依然吞掉补丁。
+   退出码 0 才可以合入。merge 可以干净解决却依然吞掉补丁。
+
+   不要用 grep 代替：`soil.py` 里同一个作物组表达式出现两次（灌溉分支是我们的，非灌溉分支是上游自有的），而 `irrigation.py` 写的是 `( 5 -`（括号后有空格）——朴素模式会同时产生假阴性和假阳性。脚本按分支定位、且对空白不敏感。
 3. **不要引入 `.gitattributes`。** 前身仓库的 LFS 声明正是 5 个 tutorial `.map` 文件退化成 130 字节指针的原因，而 git-lfs 从未安装。
 4. 同步一律在 `lab/sync-YYYY-MM` 分支做，验证后 `--ff-only` 落地 `lab/main`。
