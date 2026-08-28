@@ -118,6 +118,26 @@ else:
         + (f" (found: {soil_p[0].strip()!r})" if soil_p else " (no p formula in that branch)"),
     )
 
+# P1 second term: must be the general Van Diepen form, not the n_cg = 1
+# special case `/ 4`. The two terms have to move together -- a crop-group first
+# term with a hardcoded second term is the inconsistency P1 originally shipped.
+GENERAL_TERM = squash("(self.var.cropGroupNumber * (self.var.cropGroupNumber + 3))")
+
+for label, text, scope in (
+    (IRRIGATION, irr, irr),
+    (SOIL, soil, m.group("body") if m else ""),
+):
+    second = [ln for ln in active_lines(scope) if "etpotMax - 0.6" in ln or "(etpotMax-0.6)" in squash(ln)]
+    joined = squash(" ".join(second))
+    check(
+        bool(second) and GENERAL_TERM in joined and "0.6)/4" not in joined,
+        "P1",
+        f"{label}: the p correction term must use the general Van Diepen denominator"
+        " n_cg*(n_cg+3), not the hardcoded / 4"
+        + (f" (found: {[x.strip() for x in second]})" if second else " (term not found)"),
+    )
+
+
 # --- P2: swAbstractionFrac array guard -----------------------------------
 
 wd = read(WATER_DEMAND)

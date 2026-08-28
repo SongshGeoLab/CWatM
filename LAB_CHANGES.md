@@ -34,44 +34,63 @@ p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
 
 **为何两个文件必须同一个 commit**：`soil.py` 用的 `cropGroupNumber` 由上游 `soil.py:166` 载入，自足；`irrigation.py:109` 的载入是防模块初始化顺序的冗余保护。拆开会留下可能 `AttributeError` 的中间状态。
 
-> ### ⚠️ 已知不自洽 —— 重新率定前必须定夺
->
-> p 的**第二项修正仍写死为作物组 = 1 的特例**：
->
-> ```python
-> p = p + (etpotMax - 0.6) / 4      # 未改
-> ```
->
-> Van Diepen 通用式分母是 `n_cg · (n_cg + 3)`，`4` 正是 `n_cg = 1` 时的 `1 × (1+3)`。
->
-> **决定性证据在同一个函数里**：`soil.py` 的**非灌溉分支**（`else`，:367-373）本来就用通用式，而 P1 所在的**灌溉分支**（:357-359）第二项仍是 `/4`：
->
-> ```python
-> if coverType == 'irrPaddy' or coverType == 'irrNonPaddy':
->     p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)   # ← P1 改了
->     p = p + (etpotMax - 0.6) / 4                                             # ← 仍是 n_cg=1 特例
-> else:
->     p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
->     p = np.where(self.var.cropGroupNumber <= 2.5,
->                  p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
-> ```
->
-> P1 之前两个分支各自自洽（灌溉用 `-0.4` + `/4`，都是 n_cg=1）；P1 之后灌溉分支变成第一项按真实作物组算、第二项按水稻算。取 `etpotMax = 1.0, n_cg = 4`：正确修正 `0.4/28 = 0.014`，当前给出 `0.4/4 = 0.100`，p 偏高 0.086 → `wCrit` 偏低 → 灌溉触发被推迟。
->
-> **两个选项**：
->
-> (a) **对齐 else 分支**（推荐，代码就在 6 行之下）：
->
-> ```python
-> p = np.where(self.var.cropGroupNumber <= 2.5,
->              p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
-> ```
->
-> `irrigation.py` 同样位置也要改（上游已把该式作为注释留在 `irrigation.py`）。
->
-> (b) 退回 `- 0.4` + `/4`，即放弃 P1。
->
-> **尚未决定。CP1 重新率定之前必须定夺**，否则率定的是一个内部不自洽的公式。
+### 决议（2026-08-28）：采用 Van Diepen 通用式，两项一起改
+
+P1 最初只改了第一项，第二项 `p = p + (etpotMax - 0.6) / 4` 仍是作物组 = 1 的特例（`4 = 1 × (1+3)`），两项不自洽。现已一并改为通用式：
+
+```python
+p = 1 / (0.76 + 1.5 * etpotMax) - 0.10 * (5 - self.var.cropGroupNumber)
+p = np.where(self.var.cropGroupNumber <= 2.5,
+             p + (etpotMax - 0.6) / (self.var.cropGroupNumber * (self.var.cropGroupNumber + 3)), p)
+```
+
+`soil.py` 与 `irrigation.py` 两处同时改。改后与 `soil.py` 非灌溉分支（:373）以及上游保留在 `irrigation.py` 中的注释形式逐字一致。
+
+**发现这处不自洽的依据**：`soil.py` 同一个函数里，非灌溉分支本来就用通用式，只有 P1 所在的灌溉分支用 `/4`。
+
+```python
+if coverType == 'irrPaddy' or coverType == 'irrNonPaddy':
+    p = ... - 0.10 * (5 - cropGroupNumber)     # P1 改了第一项
+    p = p + (etpotMax - 0.6) / 4               # 第二项曾停留在 n_cg=1
+else:                                          # 上游自有，两项都随作物组
+    p = ... - 0.10 * (5 - cropGroupNumber)
+    p = np.where(cropGroupNumber <= 2.5, p + (etpotMax - 0.6) / (n*(n+3)), p)
+```
+
+#### 与上游的差别
+
+| | 上游标准 CWatM | 本 fork |
+|---|---|---|
+| 灌溉地类（irrPaddy / irrNonPaddy） | `p = 1/(0.76+1.5·E) − 0.4`，再 `+ (E−0.6)/4` — 两项都固定为 n_cg = 1 | 两项都随 `cropgroupnumber` 输入图变化 |
+| 非灌溉地类 | 随作物组 + 通用式 | **不变**（与上游相同） |
+
+上游的隐含假设是"灌溉作物对干旱适应性低，等同作物组 1"；本 fork 改为使用实际作物组，理由是研究区灌溉作物类型多样，统一按水稻处理不合适。
+
+#### 数值后果
+
+`p` 只影响**灌溉触发时机**（阈值 = `α·(1−p)·totAvlWater`），不影响单次灌溉量（`α·totAvlWater − readAvlWater`）。p 越大 → 阈值越低 → 触发越晚。
+
+`n_cg = 1` 时本 fork 与上游完全相同。差异随作物组增大：
+
+| ETmax | n_cg | 上游 | 本 fork | 触发阈值变化 |
+|---:|---:|---:|---:|---:|
+| 0.2 | 1 | 0.443 | 0.443 | 0% |
+| 0.2 | 3 | 0.443 | 0.743 | −54% |
+| 0.2 | 5 | 0.443 | 0.943 | −90% |
+| 1.0 | 3 | 0.142 | 0.242 | −12% |
+| 1.0 | 5 | 0.142 | 0.442 | −35% |
+
+**注意 `≤ 2.5` 门限**：作物组 3–5 的格点完全不施加第二项修正，此时 `p = 1/(0.76+1.5·E) − 0.10·(5−n_cg)`。若研究区作物组集中在 3–5，论文中需说明这一点。
+
+**待办**：尚未核对研究区 `cropgrp.nc`（`$(PathMaps)/soil/cropgrp.nc`）的实际取值分布。若基本都是 1，本改动相对上游无实质差别；若 2–5 占比可观，则是模型行为的实质偏离，必须在论文中论证。
+
+#### 未采纳的方案
+
+方案 B（撤销 P1、灌溉地类回到上游 `− 0.4` + `/4`）保留在分支 `lab/p-option-b`，标签 `p-option-b-not-taken`。它同样自洽，代价是放弃"灌溉作物按真实作物组"这一主张。
+
+#### 防回退
+
+`tools/check_lab_patches.py` 会同时校验两项：第一项含 `cropGroupNumber`，第二项用 `n_cg*(n_cg+3)` 而非 `/4`。合并上游后若任一项被吞掉，脚本报错退出。
 
 ---
 
