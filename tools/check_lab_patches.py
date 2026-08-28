@@ -57,6 +57,27 @@ def check(ok: bool, patch: str, msg: str) -> None:
     results.append((ok, patch, msg))
 
 
+# --- fail fast on an unresolved merge ------------------------------------
+# Every check below assumes one active version of each line. A file still
+# carrying conflict markers has two, which would produce a confusing failure.
+_conflicted = [
+    rel
+    for rel in (
+        "cwatm/hydrological_modules/water_demand/irrigation.py",
+        "cwatm/hydrological_modules/soil.py",
+        "cwatm/hydrological_modules/water_demand/water_demand.py",
+        "cwatm/management_modules/data_handling.py",
+        "cwatm/hydrological_modules/inflow.py",
+    )
+    if re.search(r"^<{7} ", (ROOT / rel).read_text(encoding="utf-8"), re.MULTILINE)
+]
+if _conflicted:
+    print("Unresolved merge conflicts -- resolve these first, then re-run:")
+    for rel in _conflicted:
+        print(f"  {rel}")
+    sys.exit(1)
+
+
 # --- P1: cropGroupNumber-based depletion fraction -------------------------
 
 irr = read(IRRIGATION)
