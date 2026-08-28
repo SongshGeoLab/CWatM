@@ -104,6 +104,9 @@ class waterdemand_irrigation:
         self.var.efficiencyPaddy = loadmap("irrPaddy_efficiency")
         self.var.efficiencyNonpaddy = loadmap("irrNonPaddy_efficiency")
         self.var.returnfractionIrr = loadmap("irrigation_returnfraction")
+        
+        # crop number
+        self.var.cropGroupNumber = loadmap('cropgroupnumber')
 
         # for Xiaogang's agent model
         if "alphaDepletion" in binding:
@@ -175,8 +178,8 @@ class waterdemand_irrigation:
         # to avoid a strange behaviour of the p-formula's, ETRef is set to a maximum of 10 mm/day.
 
         # for group number 1 -> those are plants which needs irrigation
-        # p = 1 / (0.76 + 1.5 * np.minimum(0.1 * (self.var.totalPotET[No] * 1000.), 1.0)) - 0.10 * ( 5 - cropGroupNumber)
-        p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
+        p = 1 / (0.76 + 1.5 * np.minimum(0.1 * (self.var.totalPotET[No] * 1000.), 1.0)) - 0.10 * ( 5 - self.var.cropGroupNumber)
+        # p = 1 / (0.76 + 1.5 * etpotMax) - 0.4
         # soil water depletion fraction (easily available soil water) # Van Diepen et al., 1988: WOFOST 6.0, p.87.
         p = p + (etpotMax - 0.6) / 4
         # correction for crop group 1  (Van Diepen et al, 1988) -> p between 0.14 - 0.77
