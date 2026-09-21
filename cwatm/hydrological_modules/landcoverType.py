@@ -114,6 +114,8 @@ class landcoverType(object):
     leakageIntoRunoff                    Array         Canal leakage leading to runoff                                         m    
     dynamicLandcover                     Flag          If landcover changes per year or is constant                            bool 
     staticLandCoverMaps                  Flag          1=staticLandCoverMaps in settings file is True, 0=otherwise             bool 
+    readKcDaily                          Flag          1=crop coefficient read as daily time series, 0=repeating cycle        bool 
+    readInterceptCapDaily                Flag          1=interception capacity read as daily time series, 0=repeating cycle    bool 
     landcoverSum                         Array         Sum of all landcover, should be 1.0                                     %    
     totalET                              Array         Total evapotranspiration for each cell including all landcover types    m    
     sum_interceptStor                    Array         Total of simulated vegetation interception storage including all landc  m    
@@ -306,6 +308,16 @@ class landcoverType(object):
         self.var.staticLandCoverMaps = False
         if "staticLandCoverMaps" in option:
             self.var.staticLandCoverMaps = checkOption('staticLandCoverMaps')
+
+        # crop coefficient and interception capacity are either taken from a
+        # repeating intra-annual cycle or read as a continuous daily time series
+        self.var.readKcDaily = False
+        if "readKcDaily" in option:
+            self.var.readKcDaily = checkOption('readKcDaily')
+
+        self.var.readInterceptCapDaily = False
+        if "readInterceptCapDaily" in option:
+            self.var.readInterceptCapDaily = checkOption('readInterceptCapDaily')
 
 
         self.var.coverTypes = list(map(str.strip, cbinding("coverTypes").split(",")))

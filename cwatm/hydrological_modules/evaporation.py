@@ -132,25 +132,32 @@ class evaporation(object):
         Sets up crop coefficient arrays, interception capacity arrays, and reads
         initial data for different cover types including forest, grassland, and
         irrigated crops. Initializes monthly crop coefficient data from NetCDF files.
+
+        With readKcDaily = True the crop coefficient is read for every time step
+        in dynamic() instead, so no intra-annual cycle is read in advance.
         """
         # no_types = len (self.var.coverTypes)
+        # flag set in the land cover module, which is initialised before this one
+        self.var.readKcDaily = getattr(self.var, 'readKcDaily', False)
+
         self.var.cropKCmonth = np.zeros((4, 13, len(globals.inZero)))
         self.var.cropKC = np.zeros((4, len(globals.inZero)))
         self.var.interceptCap = np.zeros((2, 13, len(globals.inZero)))
-        j = 0
-        for coverType in self.var.coverTypes:
+        if not self.var.readKcDaily:
+            j = 0
+            for coverType in self.var.coverTypes:
 
-            if coverType in ['forest', 'grassland', 'irrPaddy', 'irrNonPaddy']:
-                for i in range(13):
-                    self.var.cropKCmonth[j, i, :] = readnetcdf2(coverType + '_cropCoefficientNC', i * 3, "10day")
-                    self.var.cropKCmonth[j, i, :] = np.maximum(self.var.cropKCmonth[j, i, :], self.var.minCropKC)
-                iii = 1
+                if coverType in ['forest', 'grassland', 'irrPaddy', 'irrNonPaddy']:
+                    for i in range(13):
+                        self.var.cropKCmonth[j, i, :] = readnetcdf2(coverType + '_cropCoefficientNC', i * 3, "10day")
+                        self.var.cropKCmonth[j, i, :] = np.maximum(self.var.cropKCmonth[j, i, :], self.var.minCropKC)
+                    iii = 1
 
-            if coverType in ['forest', 'grassland']:
-                for i in range(13):
-                    self.var.interceptCap[j, i, :] = readnetcdf2(coverType + '_interceptCapNC', i * 3, "10day")
-                    self.var.interceptCap[j, i, :] = np.maximum(self.var.interceptCap[j, i, :], self.var.minInterceptCap[j])
-            j = j + 1
+                if coverType in ['forest', 'grassland']:
+                    for i in range(13):
+                        self.var.interceptCap[j, i, :] = readnetcdf2(coverType + '_interceptCapNC', i * 3, "10day")
+                        self.var.interceptCap[j, i, :] = np.maximum(self.var.interceptCap[j, i, :], self.var.minInterceptCap[j])
+                j = j + 1
         ii = 1
 
     def dynamic(self, coverType, No):
@@ -185,7 +192,14 @@ class evaporation(object):
         dpart = dateVar['doy'] % 30
         if dplus > 12:
             dplus = 0
-        self.var.cropKC[No] = ((self.var.cropKCmonth[No, dplus, :] - self.var.cropKCmonth[No, dateVar['30day'], :]) / 30. * 
+        if self.var.readKcDaily:
+            # crop coefficient read for the current day from a continuous time
+            # series instead of being interpolated within a repeating cycle
+            self.var.cropKC[No] = readnetcdf2_daily(coverType + '_cropCoefficientNC',
+                                                    dateVar['currDate'])
+            self.var.cropKC[No] = np.maximum(self.var.cropKC[No], self.var.minCropKC)
+        else:
+            self.var.cropKC[No] = ((self.var.cropKCmonth[No, dplus, :] - self.var.cropKCmonth[No, dateVar['30day'], :]) / 30. * 
                                dpart + self.var.cropKCmonth[No, dateVar['30day'], :])
         cropKC_landCover = self.var.cropKC[No]
 

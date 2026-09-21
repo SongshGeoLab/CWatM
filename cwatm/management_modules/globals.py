@@ -232,6 +232,12 @@ inputcounter = {}
 flagmeteo = {}
 meteofiles = {}
 
+# Daily land cover parameter maps (e.g. crop coefficient, interception capacity)
+# are indexed by file path, so that several land cover types sharing the same
+# netCDF variable name do not interfere with each other
+global dailyMapCache
+dailyMapCache = {}
+
 # Initial conditions
 global initCondVar, initCondVarValue
 initCondVarValue = []

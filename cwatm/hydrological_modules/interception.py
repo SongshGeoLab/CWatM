@@ -104,14 +104,23 @@ class interception(object):
             self.var.interceptCap[No] = self.var.minInterceptCap[No] 
         """
 
+        if coverType in ['forest', 'grassland']:
+            if self.var.readInterceptCapDaily:
+                # interception capacity read for the current day from a
+                # continuous time series instead of a repeating cycle
+                interceptCapNow = readnetcdf2_daily(coverType + '_interceptCapNC',
+                                                    dateVar['currDate'])
+                interceptCapNow = np.maximum(interceptCapNow, self.var.minInterceptCap[No])
+            else:
+                interceptCapNow = self.var.interceptCap[No, dateVar['30day'], :]
+        else:
+            interceptCapNow = self.var.minInterceptCap[No]
+
         # Rain instead Pr, because snow is substracted later
         # assuming that all interception storage is used the other time step
-        if coverType in ['forest', 'grassland']:
-            throughfall = np.maximum(0.0, self.var.Rain + self.var.interceptStor[No] -
-                                     self.var.interceptCap[No, dateVar['30day'], :])
-        else:
-            throughfall = np.maximum(0.0, self.var.Rain + self.var.interceptStor[No] -
-                                     self.var.minInterceptCap[No])
+        throughfall = np.maximum(0.0, self.var.Rain + self.var.interceptStor[No] -
+                                 interceptCapNow)
+
         # update interception storage after throughfall
         self.var.interceptStor[No] = self.var.interceptStor[No] + self.var.Rain - throughfall
 
@@ -119,12 +128,12 @@ class interception(object):
         self.var.availWaterInfiltration[No] = np.maximum(0.0, throughfall + self.var.SnowMelt + self.var.IceMelt)
 
         if coverType in ['forest', 'grassland']:
-            mult = (divideValues(self.var.interceptStor[No], self.var.interceptCap[No, dateVar['30day'], :]) ** 
+            mult = (divideValues(self.var.interceptStor[No], interceptCapNow) ** 
                     self.var.twothird)
             # interceptEvap evaporation from intercepted water (based on potTranspiration)
             self.var.interceptEvap[No] = np.minimum(self.var.interceptStor[No], self.var.potTranspiration[No] * mult)
         if coverType in ['irrPaddy', 'irrNonPaddy']:
-            mult = (divideValues(self.var.interceptStor[No], self.var.minInterceptCap[No] + globals.inZero) ** 
+            mult = (divideValues(self.var.interceptStor[No], interceptCapNow + globals.inZero) ** 
                     self.var.twothird)
             # interceptEvap evaporation from intercepted water (based on potTranspiration)
             self.var.interceptEvap[No] = np.minimum(self.var.interceptStor[No], self.var.potTranspiration[No] * mult)

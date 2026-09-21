@@ -1831,6 +1831,212 @@ def readnetcdf2(namebinding, date, useDaily='daily', value='None', addZeros=Fals
     return mapC
 
 
+def readDailySlice(nf1, value, idx, cut, turn_latitude):
+    """
+    Read one time step of an open map stack and clip it to the model domain.
+    
+    Parameters
+    ----------
+    nf1 : netCDF4.Dataset
+        Open map stack.
+    value : str
+        NetCDF variable name.
+    idx : int
+        Time step to read.
+    cut : bool
+        Clip data to model domain.
+    turn_latitude : bool
+        True if the latitude axis of the file is reversed.
+    
+    Returns
+    -------
+    numpy.ndarray
+        2D array of the requested time step.
+    
+    Notes
+    -----
+    The array is only flipped when it is not cut, which is the behaviour of
+    readnetcdf2. Flipping a cut array as well would change results of the
+    existing readers, so it is left as it is.
+    """
+    if cut:
+        mapnp = nf1.variables[value][idx, cutmap[2]:cutmap[3],
+                                      cutmap[0]:cutmap[1]].astype(np.float64)
+    else:
+        mapnp = nf1.variables[value][idx].astype(np.float64)
+        if turn_latitude:
+            mapnp = np.flipud(mapnp)
+    return mapnp
+
+
+def readnetcdf2_daily(namebinding, date, value='None', addZeros=False, cut=True,
+                      zeros=0.0, usefilename=False, compress=True):
+    """
+    Read one time step of a daily parameter map stack.
+    
+    Reader for land cover parameters (crop coefficient, interception capacity)
+    that are delivered as a continuous daily time series, in contrast to
+    readnetcdf2 which picks a value from a repeating intra-annual cycle.
+    
+    Parameters
+    ----------
+    namebinding : str
+        Configuration binding key or file path.
+    date : datetime-like
+        Target date for temporal data extraction.
+    value : str, optional
+        NetCDF variable name. Default is 'None', which takes the last variable
+        name stored in the file.
+    addZeros : bool, optional
+        Replace missing values with zeros value. Default is False.
+    cut : bool, optional
+        Clip data to model domain. Default is True.
+    zeros : float, optional
+        Replacement value for missing data. Default is 0.0.
+    usefilename : bool, optional
+        Use filename as variable name. Default is False.
+    compress : bool, optional
+        Return compressed 1D format. Default is True.
+    
+    Returns
+    -------
+    numpy.ndarray
+        Extracted data in requested format (1D compressed or 2D).
+    
+    Raises
+    ------
+    CWATMFileError
+        If the file cannot be opened or contains no 'time' variable.
+    CWATMWarning
+        If the map has a different number of valid pixels than the mask map.
+    
+    Notes
+    -----
+    - Supports a continuous daily time series, no intra-annual cycle
+    - The time axis of every file is read once and cached in dailyMapCache,
+      keyed by file path, so that land cover types sharing the same netCDF
+      variable name keep separate time axes and do not advance a common counter
+    - The time step used is the one closest to the current model date. The index
+      is derived from the date, not from the number of previous calls, therefore
+      the result does not depend on how often this function is called
+    - Used for crop coefficient and interception capacity
+    """
+
+    # in case a filename is used e.g. because of direct loading of pre results
+    if usefilename:
+        name = namebinding
+    else:
+        name = cbinding(namebinding)
+    filename = os.path.normpath(name)
+    fkey = os.path.abspath(filename)
+
+    if fkey in dailyMapCache:
+        # file handle and time axis are cached, as the time axis of a map stack
+        # would otherwise be read again at every time step
+        nf1, value, datefile, toffset, monthIndex, turn_latitude, inVersion = dailyMapCache[fkey]
+    else:
+        try:
+            nf1 = Dataset(filename, 'r')
+        except:
+            msg = "Error 212: Netcdf map stacks: \n"
+            raise CWATMFileError(filename, msg, sname=namebinding)
+
+        if value == "None":
+            value = getvariablename(nf1)
+        if 'time' not in nf1.variables:
+            nf1.close()
+            msg = "Error 216: No time variable in daily map stack: \n"
+            raise CWATMFileError(filename, msg, sname=namebinding)
+
+        # units of the time axis
+        try:
+            datefile = nf1.variables['time'].units
+        except:
+            datefile = dateVar['unit']
+
+        # offset between the time axis and the start of the simulation
+        toffset = date2num(dateVar['dateBegin'], units=datefile, calendar=dateVar['calendar'])
+
+        # model time steps of every time step stored in this file, so that the
+        # time step of a given date can be located without reading the time
+        # axis again
+        monthIndex = np.asarray(np.round((nf1.variables['time'][:] - toffset) /
+                                         dateVar['unitConv']))
+
+        # check if latitude is reversed
+        turn_latitude = False
+        if (nf1.variables['lat'][0] - nf1.variables['lat'][-1]) < 0:
+            turn_latitude = True
+
+        # if first day store the name and the date
+        if dateVar["curr"] == 0:
+            try:
+                history = nf1.getncattr('history')
+            except:
+                history = ""
+            addtoversiondate(filename, history)
+            inVersion = True
+        else:
+            inVersion = False
+
+        dailyMapCache[fkey] = (nf1, value, datefile, toffset, monthIndex, turn_latitude, inVersion)
+
+    # the file might be read for the first time after the first day of a
+    # simulation, which can happen when a cover type starts later
+    if not(inVersion) and dateVar["curr"] == 0:
+        try:
+            history = nf1.getncattr('history')
+        except:
+            history = ""
+        addtoversiondate(filename, history)
+        dailyMapCache[fkey] = (nf1, value, datefile, toffset, monthIndex, turn_latitude, True)
+
+    # time step of the model the given date corresponds to
+    checkstep = round(date2num(date, units=datefile, calendar=dateVar['calendar']))
+    checkstep = int(round((checkstep - toffset) / dateVar['unitConv']))
+
+    # closest time step stored in the file
+    idx = int(np.abs(monthIndex - checkstep).argmin())
+
+
+    try:
+        mapnp = readDailySlice(nf1, value, idx, cut, turn_latitude)
+    except:
+        # the cached handle was closed in the meantime, open the file again
+        try:
+            nf1.close()
+        except:
+            ii = 1
+        try:
+            nf1 = Dataset(filename, 'r')
+        except:
+            msg = "Error 212: Netcdf map stacks: \n"
+            raise CWATMFileError(filename, msg, sname=namebinding)
+        dailyMapCache[fkey] = (nf1, value, datefile, toffset, monthIndex, turn_latitude, inVersion)
+        mapnp = readDailySlice(nf1, value, idx, cut, turn_latitude)
+
+    try:
+        mapnp.mask.all()
+        mapnp = mapnp.data
+    except:
+        ii = 1
+
+    # add zero values to maps in order to supress missing values
+    if addZeros:
+        mapnp[np.isnan(mapnp)] = zeros
+    if not compress:
+        return mapnp
+
+    if maskinfo['shapeflat'][0] != mapnp.size:
+        msg = "Error 110: " + filename + " has less or more valid pixels than the mask map \n"
+        raise CWATMWarning(msg)
+
+    mapC = compressArray(mapnp, name=filename)
+    if Flags['check']:
+        checkmap(value, filename, mapnp)
+    return mapC
+
+
 def readnetcdfWithoutTime(name, value="None", counter=0):
     """
     Read static (time-independent) data from NetCDF files.

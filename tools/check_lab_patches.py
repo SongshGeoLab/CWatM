@@ -12,7 +12,7 @@ you nothing about whether the patch survived.
 Exit 0 = all patches intact. Exit 1 = at least one is missing or altered.
 
 The strongest check is the DEVIATION SURFACE: `git diff upstream/develop --
-cwatm/` must touch exactly the four patched files and nothing else. That
+cwatm/` must touch exactly the patched files listed below and nothing else. That
 catches what the per-patch patterns below cannot -- an accidental edit, a
 half-resolved merge hunk, a stray upstream file left behind. It needs the
 `upstream` remote fetched, and is skipped with a warning if it is not.
@@ -57,10 +57,18 @@ SOIL = "cwatm/hydrological_modules/soil.py"
 WATER_DEMAND = "cwatm/hydrological_modules/water_demand/water_demand.py"
 DATA_HANDLING = "cwatm/management_modules/data_handling.py"
 INFLOW = "cwatm/hydrological_modules/inflow.py"
+EVAPORATION = "cwatm/hydrological_modules/evaporation.py"
+INTERCEPTION = "cwatm/hydrological_modules/interception.py"
+LANDCOVER_TYPE = "cwatm/hydrological_modules/landcoverType.py"
+GLOBALS = "cwatm/management_modules/globals.py"
 
 # The exact set of files this fork may differ from upstream/develop in.
 UPSTREAM_REF = "upstream/develop"
-EXPECTED_DEVIATION = {IRRIGATION, SOIL, WATER_DEMAND, INFLOW}
+EXPECTED_DEVIATION = {
+    IRRIGATION, SOIL, WATER_DEMAND, INFLOW,
+    # P5, daily crop coefficient and interception capacity
+    DATA_HANDLING, EVAPORATION, INTERCEPTION, LANDCOVER_TYPE, GLOBALS,
+}
 
 CROP_GROUP_TERM = squash("- 0.10 * (5 - self.var.cropGroupNumber)")
 FIXED_TERM = squash("- 0.4")
@@ -78,11 +86,15 @@ def check(ok: bool, patch: str, msg: str) -> None:
 _conflicted = [
     rel
     for rel in (
-        "cwatm/hydrological_modules/water_demand/irrigation.py",
-        "cwatm/hydrological_modules/soil.py",
-        "cwatm/hydrological_modules/water_demand/water_demand.py",
-        "cwatm/management_modules/data_handling.py",
-        "cwatm/hydrological_modules/inflow.py",
+        IRRIGATION,
+        SOIL,
+        WATER_DEMAND,
+        DATA_HANDLING,
+        INFLOW,
+        EVAPORATION,
+        INTERCEPTION,
+        LANDCOVER_TYPE,
+        GLOBALS,
     )
     if re.search(r"^<{7} ", (ROOT / rel).read_text(encoding="utf-8"), re.MULTILINE)
 ]
@@ -95,9 +107,9 @@ if _conflicted:
 
 # --- deviation surface ----------------------------------------------------
 # The strongest check there is: our tree may differ from upstream/develop in
-# exactly four files under cwatm/, and no others. Anything else -- an editor
-# stray, a half-resolved merge hunk, an upstream file we forgot to take -- is
-# caught here even when every pattern below still matches.
+# exactly the files listed in EXPECTED_DEVIATION, and no others. Anything else --
+# an editor stray, a half-resolved merge hunk, an upstream file we forgot to
+# take -- is caught here even when every pattern below still matches.
 
 _diff = subprocess.run(
     ["git", "diff", "--name-only", UPSTREAM_REF, "--", "cwatm/"],
@@ -121,8 +133,8 @@ else:
     check(
         not extra and not missing,
         "surface",
-        f"cwatm/ must differ from {UPSTREAM_REF} in exactly the four patched"
-        f" files.{detail}",
+        f"cwatm/ must differ from {UPSTREAM_REF} in exactly the"
+        f" {len(EXPECTED_DEVIATION)} patched files.{detail}",
     )
 
 
@@ -223,6 +235,71 @@ check(
     "utf-8 BOM" in inf,
     "P4",
     f"{INFLOW}: the Error 218 message must keep the utf-8 BOM hint",
+)
+
+
+# --- P5: daily crop coefficient and interception capacity -----------------
+# Two options that switch the land cover parameters from a repeating
+# intra-annual cycle to a continuous daily time series. Both default to off, so
+# the upstream path is untouched; what has to survive a merge is the option
+# itself, the reader and the two call sites.
+
+evap = read(EVAPORATION)
+inter = read(INTERCEPTION)
+lcov = read(LANDCOVER_TYPE)
+glob = read(GLOBALS)
+
+for key in ("readKcDaily", "readInterceptCapDaily"):
+    check(
+        bool(re.search(rf"if\s+['\"]{key}['\"]\s+in\s+option", lcov)),
+        "P5",
+        f"{LANDCOVER_TYPE}: option '{key}' must be read, otherwise the setting"
+        " silently does nothing and the model keeps its annual cycle",
+    )
+
+check(
+    bool(re.search(r"def\s+readnetcdf2_daily\s*\(", dh)),
+    "P5",
+    f"{DATA_HANDLING}: readnetcdf2_daily() must exist. It resolves the time index"
+    " from the date, not from a call counter",
+)
+
+check(
+    "dailyMapCache" in glob and bool(re.search(r"^dailyMapCache\s*=\s*\{\}", glob, re.M)),
+    "P5",
+    f"{GLOBALS}: dailyMapCache must be initialised. It is keyed by file path, not by"
+    " netCDF variable name -- every land cover stack uses the variable name kc, so a"
+    " cache keyed by name would make the four cover types advance one shared counter",
+)
+
+check(
+    bool(re.search(r"if\s+self\.var\.readKcDaily\s*:", evap)),
+    "P5",
+    f"{EVAPORATION}: dynamic() must branch on readKcDaily. Without it the crop"
+    " coefficient is interpolated inside one year for every simulation year",
+)
+
+check(
+    bool(re.search(r"if\s+self\.var\.readInterceptCapDaily\s*:", inter)),
+    "P5",
+    f"{INTERCEPTION}: dynamic() must branch on readInterceptCapDaily",
+)
+
+check(
+    bool(re.search(r"fkey\s*=\s*os\.path\.abspath\s*\(\s*filename\s*\)", dh)),
+    "P5",
+    f"{DATA_HANDLING}: readnetcdf2_daily must key its cache by file path"
+    " (os.path.abspath(filename)). Keying it by the netCDF variable name would make"
+    " the four cover types advance one shared time axis, because every land cover"
+    " stack stores the crop coefficient as the variable 'kc'",
+)
+
+check(
+    "readnetcdf2_daily" in evap and "readnetcdf2_daily" in inter,
+    "P5",
+    "both call sites must use readnetcdf2_daily, not readnetcdf2 with useDaily='daily'."
+    " That path caches the time index in inputcounter keyed by the variable name and"
+    " advances it once per call, which is wrong for land cover parameters",
 )
 
 

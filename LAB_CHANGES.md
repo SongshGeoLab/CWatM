@@ -13,11 +13,14 @@
 git diff upstream/develop -- cwatm/
 ```
 
-**这条命令的输出就是本 fork 的全部偏离**——四个文件、约 40 行，一屏读完。
+**这条命令的输出就是本 fork 的全部偏离**——九个文件、约 270 行，除 P5 的新增读取器（约 200 行）外一屏读完。P5 默认关闭，关闭时行为与上游一致。
 不需要读历史，不需要信任本文件的叙述，直接看 diff。
 
 由 `python3 tools/check_lab_patches.py` 机器校验，每次合并上游后**必跑**，退出码 0 才可以
 `--ff-only` 落地 `lab/main`。
+
+确切文件集由校验器里的 `EXPECTED_DEVIATION` 持有（P1–P4 四个，加 P5 的五个：
+`data_handling.py`、`globals.py`、`landcoverType.py`、`evaporation.py`、`interception.py`），与上面的叙述不一致时以校验器为准。
 
 ---
 
@@ -76,6 +79,8 @@ p = np.where(self.var.cropGroupNumber <= 2.5,
 若基本都是 1，本改动相对上游无实质差别；若 2–5 占比可观，则是模型行为的实质偏离，
 必须在论文中论证。
 
+**方法检测**：约80%格点的cropgrp取值大于2.5，有潜在影响，等待率定完成确认。
+
 ### 未采纳的方案
 
 方案 B（撤销 P1、灌溉地类回到上游 `− 0.4` + `/4`）保留在分支 `lab/p-option-b`，
@@ -114,6 +119,52 @@ if np.min(np.asarray(swAbstractionFraction)) < 0:
 而 BOM 前缀是最常见原因。
 
 来源：`CtJiao/CWatM-version1.06@e29dea7`。
+
+---
+
+## P5 — Kc / 截留容量改为可选逐日读取
+
+**状态**：实验室能力新增，**永不提交上游**（上游没有逐日参数文件这种东西）。默认关闭，关闭时上游路径一字未动。
+
+**文件**：`cwatm/management_modules/data_handling.py`（新增 `readnetcdf2_daily`、`readDailySlice`）、
+`cwatm/management_modules/globals.py`（`dailyMapCache`）、
+`cwatm/hydrological_modules/landcoverType.py`（读两个开关）、
+`cwatm/hydrological_modules/evaporation.py`（Kc 分支）、
+`cwatm/hydrological_modules/interception.py`（截留容量分支）
+
+**背景**：上游用 `dateVar['10day'] = int((doy-1)/10)` 取旬下标，再把它当作 netCDF 的时间下标。
+而全球陆面参数文件的 time 轴是**跨 30 年连续**的（1990-01-01 … 2019-12-27，1110 = 30 × 37 步），
+于是模拟的每一年都在重读第一年的那 37 个值：1990 与 2016 读的是同一片数据。
+
+**与气象数据的区别**：气象走独立的 `readmeteodata` + `meteofiles`，索引由文件计数器推进、跨年连续，
+所以气象没有这个问题。受影响的是地表参数这一类 reader。
+
+**改动**：加两个设置键，默认关闭，关闭时完全走原路径。
+
+```ini
+[OPTIONS]
+readKcDaily = True
+readInterceptCapDaily = True
+```
+
+打开后 `evaporation.dynamic()` 与 `interception.dynamic()` 用
+`readnetcdf2_daily(binding, dateVar['currDate'])` 取当日值，仍施加 `minCropKC` /
+`minInterceptCap` 下限；`evaporation.initial()` 在打开时跳过 13 个整旬的预读。
+
+`readnetcdf2_daily` 的索引是**当前日期的纯函数**：首次遇到某文件时把 time 轴换算成“相对模拟起点的
+模型步号”缓存，之后用 `argmin(|monthIndex - checkstep|)` 定位。
+
+**为何不复用** `readnetcdf2(useDaily='daily', meteo=True)`：那条路径的缓存 `inputcounter[value]`
+按**变量名**分键、按**调用次数**推进。四个地类的 Kc 文件里变量名都叫 `kc`，于是四个地类会共用
+一个时间轴并互相推进——每天读 4 次就推进 4 步。`readnetcdf2_daily` 按**文件路径**分键，各文件时间轴
+独立，且索引与调用次数无关。
+
+### 验收
+
+- `check_lab_patches.py` 的 P5 模式检查（6 条，含“缓存必须按文件路径分键”）；已做负向测试，四种回退
+  全部被抓到（选项名拼错、逐日分支被删、缓存改按变量名分键、调用点退回 `readnetcdf2`）。
+- 读取器单测：用模型参数调用 `readnetcdf2_daily`，索引正确且与文件逐位相同。
+
 
 ---
 
@@ -231,13 +282,15 @@ pot_irrConsumption[3] = np.minimum(pot_irrConsumption[3], potInf)
 应改用 WaterCycle 输出做事后核算，并在重新率定前，用标签 `pre-rebaseline-2026-08` 的旧代码
 跑一次 `calcWaterBalance = True` 留档，作为对照基线。
 
+**回应**：其实从来没用过
+
 ---
 
 ## ⚠️ settings.ini 迁移清单
 
 ### 必须添加
 
-```ini
+``````ini
 [OPTIONS]
 reportOldTss = True
 ```
@@ -271,7 +324,7 @@ develop 仍保留旧 TSS writer（`output.py:938-982`，同样 4 行表头），
 
 ### 必须删除（已成死条目）
 
-```ini
+``````ini
 writeNetcdfStack = True     # 删 —— 注意：这个键在 c2a1255 时就已经没有任何代码读取，
                             #      只活在 .ini 文件里，不是 328313c 移除的
 reportMap = True            # 删（328313c 变成默认行为并从 OPTION 移除）
@@ -353,7 +406,7 @@ save_git = ...              # 删
    `soil.py` 和 `water_demand.py` 就是"自动合并成功"的。
 
    脚本有两层检查。最强的一层是**偏离面**：`git diff upstream/develop -- cwatm/`
-   必须恰好触及那四个文件。这能抓到按模式匹配抓不到的东西。第二层是逐补丁的模式匹配，
+   必须恰好触及 `EXPECTED_DEVIATION` 里的那些文件。这能抓到按模式匹配抓不到的东西。第二层是逐补丁的模式匹配，
    刻意不用 grep：`soil.py` 里同一个作物组表达式出现两次（灌溉分支是我们的，
    非灌溉分支是上游自有的），脚本按分支定位、且对空白不敏感。
 
