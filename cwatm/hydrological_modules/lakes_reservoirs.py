@@ -1303,8 +1303,8 @@ class lakes_reservoirs(object):
         self.var.outLake = np.where(self.var.waterBodyOut > 0, outLakein, 0.)
 
         # Puts the value of lakeResStorage into all cells covered by the waterbody
-        self.var.lakeResStorage_filled = npareamaximum(self.var.lakeResStorage, self.var.waterBodyID)
-        self.var.lakeResStorage_buffer = npareamaximum(self.var.lakeResStorage, self.var.waterBodyBuffer)
+        #self.var.lakeResStorage_filled = npareamaximum(self.var.lakeResStorage, self.var.waterBodyID)
+        #self.var.lakeResStorage_buffer = npareamaximum(self.var.lakeResStorage, self.var.waterBodyBuffer)
 
         return outLdd, lakeResOutflowDis
 
