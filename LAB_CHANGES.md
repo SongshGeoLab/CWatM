@@ -81,6 +81,8 @@ p = np.where(self.var.cropGroupNumber <= 2.5,
 
 **方法检测**：约80%格点的cropgrp取值大于2.5，有潜在影响，等待率定完成确认。
 
+**率定检测**：确认影响大，需保留。
+
 ### 未采纳的方案
 
 方案 B（撤销 P1、灌溉地类回到上游 `− 0.4` + `/4`）保留在分支 `lab/p-option-b`，
@@ -164,6 +166,36 @@ readInterceptCapDaily = True
 - `check_lab_patches.py` 的 P5 模式检查（6 条，含“缓存必须按文件路径分键”）；已做负向测试，四种回退
   全部被抓到（选项名拼错、逐日分支被删、缓存改按变量名分键、调用点退回 `readnetcdf2`）。
 - 读取器单测：用模型参数调用 `readnetcdf2_daily`，索引正确且与文件逐位相同。
+
+
+---
+
+## P6 — 重新开启 lift area 模块
+
+**状态**：实验室能力新增，**永不提交上游**（上游 lift 模块未完成）。默认关闭，关闭时上游路径一字未动。
+
+**文件**：`cwatm/hydrological_modules/water_demand/water_demand.py`。
+
+**背景**：上游把 `swAbstractionFraction_Lift_*` 初始化为 0，只在（默认关闭的）agents 分支里改成 1
+⇒ lift 分支恒为 0，开了 `using_lift_areas` 也不抽水。且抽到的水没有消费者：它只进
+`act_SurfaceWaterAbstract`，而土壤的唯一入口是 `act_irrConsumption`。
+
+**改动**：加两个设置键，默认关闭。
+
+```ini
+[OPTIONS]
+liftFractionFix = True
+liftIrrigationLink = True
+```
+
+`liftFractionFix` 在 `using_lift_areas` 内把 4 个 lift 份额设为 1；`liftIrrigationLink` 把 lift 水
+并入灌溉账：`W` 做 `−A + B` 空间搬运，`B` 按地类需水拆成 `B2/B3`、过 `irrEff` 后进
+`act_irrConsumption`；两侧共用 `totalIrrDemand/totalDemand` 分摊比例，抽水格同步退 `C`，
+末了逐格压 `C ≤ W`（保证 `sumIrrLoss ≥ 0`）。无 lift 时两者均退化为 no-op。
+
+### 验收
+
+- 14 个需水选项全开不报错，水量平衡方程闭合。
 
 
 ---

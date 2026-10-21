@@ -709,6 +709,18 @@ class water_demand:
                     self.var.using_lift_areas = True
                     self.var.lift_command_areas = loadmap('lift_areas').astype(int)
 
+                    # LAB WD-LIFT: activate the branch of "swAbstractionFraction_Lift_Irrigation"
+                    # swAbstractionFraction_* were all set to 0 in previous commitments, unless in a specific scenario
+                    # Therefore, pot_Lift_Irrigation was always 0, and the lift branch was never activated.
+                    # Here we added the initialization of swAbstractionFraction_Lift_Irrigation to 1, if an irrigation map is read.
+                    if 'liftFractionFix' in option and checkOption('liftFractionFix'):
+                        # Now it is only supported for irrigation. as the other sectors are not used in the current version of CWatM.
+                        # TODO: Include other sectors if needed in the future.
+                        self.var.swAbstractionFraction_Lift_Domestic = 1 + globals.inZero.copy()
+                        self.var.swAbstractionFraction_Lift_Livestock = 1 + globals.inZero.copy()
+                        self.var.swAbstractionFraction_Lift_Industry = 1 + globals.inZero.copy()
+                        self.var.swAbstractionFraction_Lift_Irrigation = 1 + globals.inZero.copy()
+
                     if self.var.sectorSourceAbstractionFractions:
                         self.var.swAbstractionFraction_Lift_Domestic = loadmap(
                             'swAbstractionFraction_Lift_Domestic')
@@ -1491,8 +1503,21 @@ class water_demand:
                     self.var.livestockDemand - self.var.Desal_Livestock - self.var.Channel_Livestock)
                 pot_Lift_Industry = np.minimum(self.var.swAbstractionFraction_Lift_Industry * self.var.industryDemand, \
                     self.var.industryDemand - self.var.Desal_Industry - self.var.Channel_Industry )
-                pot_Lift_Irrigation = np.minimum(self.var.swAbstractionFraction_Lift_Irrigation * self.var.totalIrrDemand, \
-                    self.var.totalIrrDemand - self.var.Desal_Irrigation - self.var.Channel_Irrigation)
+                # LAB LIFT-RESIDUAL: lift should only fill what canal (river channel) did not already deliver.
+                # Upstream subtracts Channel_Irrigation, but it is only assigned when
+                # sectorSourceAbstractionFractions is True; otherwise it stays 0 and the
+                # residual becomes the full irrigation demand.
+                # Fall back to act_SurfaceWaterAbstract when sectorSourceAbstractionFractions is off.
+                if self.var.sectorSourceAbstractionFractions:
+                    _canalIrr = np.asarray(np.ma.filled(np.ma.asarray(
+                        self.var.Channel_Irrigation, dtype=float), 0.), dtype=float)
+                else:
+                    _canalIrr = np.asarray(np.ma.filled(np.ma.asarray(
+                        self.var.act_SurfaceWaterAbstract, dtype=float), 0.), dtype=float)
+                pot_Lift_Irrigation = np.minimum(
+                    self.var.swAbstractionFraction_Lift_Irrigation * self.var.totalIrrDemand,
+                    np.maximum(0., self.var.totalIrrDemand
+                               - self.var.Desal_Irrigation - _canalIrr))
 
                 if 'irrigation_agent_SW_request_month_m3' in binding and self.var.activate_irrigation_agents:
                     pot_Lift_Irrigation = np.maximum(pot_Lift_Irrigation,
@@ -1534,6 +1559,33 @@ class water_demand:
                                                            self.var.readAvlChannelStorageM)
                 # Used in landCover for riverbedExchange
                 self.var.act_channelAbstract_Lift = cell_lift_abstraction
+
+                # ---- lift needs a consumer: store A and B for the delivery step below ----
+                if 'liftIrrigationLink' in option and checkOption('liftIrrigationLink'):
+                    # A = cell_lift_abstraction, cell-mean depth abstracted at the intake [m]
+                    # B = cell_lift_allocation, cell-mean depth allocated to demand cells [m]
+                    #   Equal volumes, i.e. two spatial views of the same water; the
+                    #   delivery step relocates it. A and B are depths: multiply by
+                    #   cellArea to obtain a volume [m3].
+                    _aU = np.asarray(np.ma.filled(np.ma.asarray(self.var.cellArea, dtype=float), 1.), dtype=float)
+                    _absA = np.maximum(0., np.asarray(np.ma.filled(np.ma.asarray(
+                        cell_lift_abstraction, dtype=float), 0.), dtype=float))
+                    _absB = np.maximum(0., np.asarray(np.ma.filled(np.ma.asarray(
+                        cell_lift_allocation, dtype=float), 0.), dtype=float))
+                    # irrigation share = totalIrrDemand/totalDemand, the same split that
+                    # act_swAbstractionFraction applies to the whole surface abstraction
+                    # (equals 1 when only irrigation is modelled)
+                    _tidS = np.nan_to_num(np.asarray(np.ma.filled(np.ma.asarray(
+                        self.var.totalIrrDemand, dtype=float), 0.), dtype=float), nan=0.0)
+                    _tdS = np.nan_to_num(np.asarray(np.ma.filled(np.ma.asarray(
+                        totalDemand, dtype=float), 0.), dtype=float), nan=0.0)
+                    _irrShare = np.where(_tdS > 0.,
+                                         np.minimum(1.0, _tidS / np.maximum(_tdS, 1e-30)),
+                                         1.0)
+                    # self._liftA_irr: A * share, removed at the intake by the delivery step
+                    # self._liftB_irr: B * share, added at the demand cells there
+                    self._liftA_irr = np.nan_to_num(_absA, nan=0.0) * _irrShare   # [m] intake, irrigation share
+                    self._liftB_irr = np.nan_to_num(_absB, nan=0.0) * _irrShare   # [m] allocation, irrigation share
 
                 if self.var.sectorSourceAbstractionFractions:
 
@@ -2164,9 +2216,19 @@ class water_demand:
                     self.var.act_nonIrrWithdrawal = globals.inZero.copy()
 
                     # irrigated water demand:
+                    # Two guards on the surface/groundwater split:
+                    #   (a) cells with totalIrrDemand == 0 get no SW credit because
+                    #       divideValues returns its default; lift can abstract there anyway.
+                    #   (b) actSW > totalDemand gives frac > 1, which makes the GW term
+                    #       negative and the min() below would pass it through.
+                    # Both are no-ops without lift, since totalDemand == 0 implies actSW == 0.
                     act_irrWithdrawalGW = self.var.totalIrrDemand * (1 - act_swAbstractionFraction)
                     act_irrWithdrawalGW = np.minimum(self.var.nonFossilGroundwaterAbs, act_irrWithdrawalGW)
+                    act_irrWithdrawalGW = np.maximum(0., act_irrWithdrawalGW)          # (b) no negative GW
                     act_irrWithdrawalSW = act_swAbstractionFraction * self.var.totalIrrDemand
+                    act_irrWithdrawalSW = np.where(self.var.totalIrrDemand > 0.,          # (a) zero-demand cells
+                                                  act_irrWithdrawalSW,                   #     use the actual actSW
+                                                  self.var.act_SurfaceWaterAbstract)
                     self.var.act_irrWithdrawal = act_irrWithdrawalSW + act_irrWithdrawalGW
                     # (nonpaddy)
                     act_irrnonpaddyGW = self.var.fracVegCover[3] * (1 - act_swAbstractionFraction) * \
@@ -2426,6 +2488,114 @@ class water_demand:
             self.var.act_irrConsumption[3] = divideValues(self.var.act_irrNonpaddyWithdrawal,
                                                           self.var.fracVegCover[3]) * self.var.efficiencyNonpaddy
 
+            # lift water takes the same route as canal abstraction: it is added to
+            # act_irrConsumption (the only irrigation entry of soil.py) and is converted
+            # from field-net to head-gross by the same /fracVegCover * irrEff step.
+            # Requires liftFractionFix, which fills self._liftA_irr / self._liftB_irr.
+            if 'liftIrrigationLink' in option and checkOption('liftIrrigationLink') \
+                    and getattr(self, '_liftA_irr', None) is not None \
+                    and getattr(self, '_liftB_irr', None) is not None:
+                # Lift delivery: relocate W from intake cells to demand cells and deliver
+                # the field-net share. A and B are cell-mean depths [m] with equal volume
+                # (sum A*area == sum B*area), i.e. two spatial views of the same water.
+                #   1) W relocation: -A at intake cells, +B at demand cells
+                #   2) field delivery: split B into B2/B3 by class demand, divide by the
+                #      class fraction and multiply by the class efficiency
+                #   3) ledger: intake, allocation and field-net volumes
+                _A3c = np.asarray(np.ma.filled(np.ma.asarray(self.var.cellArea, dtype=float), 0.), dtype=float)
+                _f2c = np.asarray(np.ma.filled(np.ma.asarray(self.var.fracVegCover[2], dtype=float), 0.),
+                                  dtype=float)
+                _f3c = np.asarray(np.ma.filled(np.ma.asarray(self.var.fracVegCover[3], dtype=float), 0.),
+                                  dtype=float)
+                # efficiencyPaddy is a scalar (0.8 from settings) and efficiencyNonpaddy is
+                # a map (irrEff.tif); element-wise broadcasting between them is safe.
+                # The floor keeps eta = 0 from zeroing the field water, which would turn
+                # the whole volume into conveyance loss.
+                _eta2 = max(float(np.ma.filled(np.ma.asarray(self.var.efficiencyPaddy, dtype=float), 1.)), 1e-6)
+                _eta3 = np.maximum(np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.efficiencyNonpaddy, dtype=float), 1.), dtype=float), 1e-6)
+                # efficiencyNonpaddy is a scalar in the calibration template and a map in
+                # production; both are valid, so only a mismatching non-scalar shape is an error.
+                if _eta3.ndim > 0 and _eta3.shape != _f3c.shape:
+                    raise ValueError('efficiencyNonpaddy shape %s != fracVegCover[3] shape %s'
+                                     % (_eta3.shape, _f3c.shape))
+                _lA = np.maximum(0., np.asarray(np.ma.filled(np.ma.asarray(
+                    self._liftA_irr, dtype=float), 0.), dtype=float))
+                _lB = np.maximum(0., np.asarray(np.ma.filled(np.ma.asarray(
+                    self._liftB_irr, dtype=float), 0.), dtype=float))
+                self._liftA_irr = None          # cleared so the next day cannot reuse them
+                self._liftB_irr = None
+                # before-snapshots of the three targets, used for the ledger increments
+                _wasC2 = np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrConsumption[2], dtype=float), 0.), dtype=float).copy()
+                _wasC = np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrConsumption[3], dtype=float), 0.), dtype=float).copy()
+                _was = np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrWithdrawal, dtype=float), 0.), dtype=float).copy()
+                # A is a cell-mean depth over the whole cell, so its volume is
+                # sum(A * cellArea). B is rescaled to match that volume, which keeps the
+                # relocation volume-neutral even if the two masks differ.
+                _volA = float(np.nansum(_lA * _A3c))
+                _volB = float(np.nansum(_lB * _A3c))
+                _volRatio = (_volA / _volB) if _volB > 0 else 1.0
+                if _volB > 0 and abs(_volRatio - 1.0) > 1e-6:
+                    _lB = _lB * _volRatio
+                    _volB = _volA
+                # split B into B2 (paddy) / B3 (non-paddy) by gross class demand:
+                # irrDemand[No] is a class-mean depth, so multiply by the class fraction
+                # to obtain a cell-mean depth comparable to B.
+                _irrD2 = np.asarray(np.ma.filled(np.ma.asarray(self.var.irrDemand[2], dtype=float), 0.), dtype=float)
+                _irrD3 = np.asarray(np.ma.filled(np.ma.asarray(self.var.irrDemand[3], dtype=float), 0.), dtype=float)
+                _D2 = np.where(_f2c > 1e-6, _f2c * _irrD2, 0.)
+                _D3 = np.where(_f3c > 1e-6, _f3c * _irrD3, 0.)
+                _Ds = _D2 + _D3
+                _B2 = np.where(_Ds > 0., _lB * (_D2 / np.maximum(_Ds, 1e-30)), 0.)
+                _B3 = _lB - _B2                       # by difference, so B2+B3 == B exactly
+                # back to class-mean depths, then apply each class efficiency
+                _dCell2 = divideValues(_B2, _f2c) * _eta2
+                _dCell3 = divideValues(_B3, _f3c) * _eta3
+                # 1) field delivery, in class-mean depths because soil.py adds
+                #    act_irrConsumption[No] inside its per-class loop.
+                #    C is also reduced at intake cells: that water is withdrawn there but
+                #    consumed elsewhere (W is reduced below), so keeping it would make
+                #    sumIrrLoss = W - C negative. Removed as lA*eta, class 3 first, then 2.
+                _needRem = _lA * _eta3
+                _rem3 = np.where(_f3c > 1e-6, divideValues(_needRem, _f3c), 0.)
+                _rem3 = np.minimum(_rem3, _wasC)
+                _leftRem = np.maximum(0., _needRem - _rem3 * _f3c)
+                _rem2 = np.where(_f2c > 1e-6, divideValues(_leftRem, _f2c), 0.)
+                _rem2 = np.minimum(_rem2, _wasC2)
+                self.var.act_irrConsumption[2] = _wasC2 - _rem2 + _dCell2
+                self.var.act_irrConsumption[3] = _wasC - _rem3 + _dCell3
+                # 2) W relocation: -A at intake cells, +B at demand cells.
+                #    A must stay in act_SurfaceWaterAbstract because routing removes the
+                #    channel storage through it, so W normally carries A at the intake
+                #    cells. Moving it keeps per-cell losses non-negative: canal loss at
+                #    intake cells, B*(1-eta) at demand cells.
+                self.var.act_irrWithdrawal = _was - _lA + _lB
+                # 3) per-cell limit: irrigation consumption cannot exceed irrigation
+                #    withdrawal. sumIrrLoss = W - C is computed per cell, so C > W would
+                #    make returnflowIrr and addtoevapotrans negative, and addtoevapotrans
+                #    enters totalET. Whatever is cut stays in Rf+AE, so
+                #    C + Rf + AE = W still holds exactly. NaN and negative W are also
+                #    cleaned here because both produce fake negative losses.
+                _wIrr = np.maximum(0., np.nan_to_num(np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrWithdrawal, dtype=float), 0.), dtype=float), nan=0.0))
+                _f2w = np.asarray(np.ma.filled(np.ma.asarray(self.var.fracVegCover[2], dtype=float), 0.), dtype=float)
+                _f3w = np.asarray(np.ma.filled(np.ma.asarray(self.var.fracVegCover[3], dtype=float), 0.), dtype=float)
+                _c3w = np.nan_to_num(np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrConsumption[3], dtype=float), 0.), dtype=float), nan=0.0)
+                _c2w = np.nan_to_num(np.asarray(np.ma.filled(np.ma.asarray(
+                    self.var.act_irrConsumption[2], dtype=float), 0.), dtype=float), nan=0.0)
+                _exw = np.maximum(0., (_f2w * _c2w + _f3w * _c3w) - _wIrr)
+                _cut3w = np.minimum(np.where(_f3w > 1e-6, divideValues(_exw, _f3w), 0.), _c3w)
+                _exw2 = np.maximum(0., _exw - _cut3w * _f3w)
+                _cut2w = np.minimum(np.where(_f2w > 1e-6, divideValues(_exw2, _f2w), 0.), _c2w)
+                self.var.act_irrWithdrawal = _wIrr
+                self.var.act_irrConsumption[3] = _c3w - _cut3w
+                self.var.act_irrConsumption[2] = _c2w - _cut2w
+
+
             if self.var.modflow:
                 if self.var.GW_pumping:  # pumping demand is sent to ModFlow (used in transient module)
                     # modfPumpingM is initialized every "modflow_timestep" in "groundwater_modflow/transient.py"
@@ -2497,6 +2667,7 @@ class water_demand:
             # river discharge than without water demand, as water is taken from fossil groundwater (out of system)
             unmet_div_ww = 1. - np.minimum(1, divideValues(self.var.unmetDemand,
                                                            self.var.act_totalWaterWithdrawal + self.var.unmetDemand))
+            self.var.unmet_div_ww = unmet_div_ww + globals.inZero
 
             # 'fossil_water_treated_normally' means that there is no lost fossil water
             if 'fossil_water_treated_normally' in option:
