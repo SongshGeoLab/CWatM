@@ -237,6 +237,14 @@ class waterdemand_irrigation:
             np.where(readAvlWater < (self.var.alphaDepletion * critAvlWater),
                      np.maximum(0.0, self.var.alphaDepletion * self.var.totAvlWater - readAvlWater), 0.), 0.)
 
+        # ---- LAB OFF-SEASON FILL: 非生长季储水灌溉，把土壤补到田间持水量 ----
+        # 窗口：FrostIndex>0（已入冷季）且 FrostDay 为假（土壤尚未封闭、下渗有效）
+        if No == 3 and checkOption('irrOffSeasonFill', True):
+            _open = (self.var.FrostIndex > 0.) & (~self.var.FrostDay) & (self.var.fracVegCover[3] > 0.)
+            _need = np.maximum(0., self.var.totAvlWater - readAvlWater)   # 补到田持还差多少 [m]
+            self.var.pot_irrConsumption[3] = np.where(
+                _open & (_need > 0.), np.minimum(_need, potInf), self.var.pot_irrConsumption[3])
+        # ---- LAB OFF-SEASON FILL END ----
 
         if "fraction_IncreaseIrrigation_Nonpaddy" in binding:
             self.var.fraction_IncreaseIrrigation_Nonpaddy = (
