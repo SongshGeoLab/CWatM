@@ -200,6 +200,51 @@ liftIrrigationLink = True
 
 ---
 
+## P7 — `Reservoir_releases` 逐库外控开关
+
+**状态**：实验室能力新增，**永不提交上游**。无开关变量时行为与上游逐位相同。
+
+**文件**：`cwatm/hydrological_modules/lakes_reservoirs.py`（三处：`initial_reservoirs` 初始化状态位；`dynamic` 中读取开关；`dynamic_inloop_reservoirs` 出库判定）。
+
+**背景**：上游 NetCDF 分支对全部水体格生效，`ratio ≤ 0` 把出库钉死为 0，无法只对部分水库外控。
+
+**改动**：NetCDF 文件中新增变量 `external control`（0/1，静态）。`1` 的格用泄流比出库，`0` 的格保留默认四档规则；洪水位以上（`fill > floodLimitC`）两者均走默认规则。变量缺失时（异常捕获）全部格按外控处理，与改动前一致。
+
+**验证**（2026-10-24，LZ 段 3 年探测 2010–2012，入流 `lz_snow_261006`）：
+
+- 缺开关变量的旧文件：与"全部开关为 1"的文件逐位相同（max|Δ| = 0）。
+- 三库外控：入流不变的 33715 个非目标格，蓄量与出库逐位相同；龙羊峡、刘家峡有差异。
+- HYK 段小浪底（14927）未做探测，待全长 A/B 时补。
+
+---
+
+## P8 — 非生长季储水灌溉（`irrOffSeasonFill`）
+
+**状态**：实验室能力新增，**永不提交上游**。缺少 `irrOffSeasonFill` 键时不启用（`checkOption` 缺键返回 False），行为与上游逐位相同。
+
+**文件**：`cwatm/hydrological_modules/water_demand/irrigation.py`（`dynamic()` 非水田分支，`No == 3`）。
+
+**背景**：上游灌溉只在生长季按耗水亏缺触发。黄土高原实际存在**秋冬储水灌溉**（把水灌进土壤、留给来年春播），上游对此没有刻画，导致秋冬月模拟"只排水不耗水"、10–3 月误差显著（详见台账 2026-10-21「LAB AUTUMN-IRR」条目）。
+
+**改动（两阶段）**
+
+1. **v1（`32adec7`，2026-10-24）**：新增开关 `irrOffSeasonFill`。窗口 = `FrostIndex > 0` **且** `FrostDay` 为假 **且** `fracVegCover[3] > 0`；窗口内把土壤补到田间持水量，单日灌量 `min(_need, potInf)`，其中 `_need = max(0, totAvlWater − readAvlWater)`（距田间持水量的亏缺，单位 m）。
+
+2. **v2（本修订）**：把 v1 的"逐日重算并直接补到田持"改为**窗口级定额**——窗口开启当日按当时的亏缺定一次配额 `_offQuota`，之后逐日扣减：
+
+   ```
+   _offQuota = where(窗口开启当日, _need, _offQuota)        # 配额只在窗口首日刷新
+   _dose     = where(窗口内, min(_offQuota, potInf, _need), 0)
+   _offQuota = max(0, _offQuota − _dose)
+   ```
+
+   **理由**：v1 每天重算 `_need`，而土壤每天又被蒸发/排水消耗掉一部分，亏缺随之回升、次日再灌 —— **同一窗口内会反复把水灌进同一层**。v2 把总量锁在"窗口开启时的亏缺"上。
+
+
+**已知限制**：窗口只按冻土状态（`FrostIndex` / `FrostDay`）判定，没有月份掩膜；若后续发现非目标月份被激活，可另加月份白名单（`irrFillToAlphaMonths` 方案已于 2026-10-21 验证可行）。
+
+---
+
 ## 已撤销的补丁
 
 ### P3 — 写 netCDF 时跳过 lon/lat 的 `_FillValue`（2026-08-28 撤销）

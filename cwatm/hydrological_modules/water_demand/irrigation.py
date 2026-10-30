@@ -237,13 +237,21 @@ class waterdemand_irrigation:
             np.where(readAvlWater < (self.var.alphaDepletion * critAvlWater),
                      np.maximum(0.0, self.var.alphaDepletion * self.var.totAvlWater - readAvlWater), 0.), 0.)
 
-        # ---- LAB OFF-SEASON FILL: 非生长季储水灌溉，把土壤补到田间持水量 ----
-        # 窗口：FrostIndex>0（已入冷季）且 FrostDay 为假（土壤尚未封闭、下渗有效）
+        # ---- LAB OFF-SEASON FILL: Non-growing season irrigation, fill soil to field capacity ----
+        # Window: FrostIndex>0 (cold season) and FrostDay False (soil not sealed, infiltration effective)
+        # Quota: the deficit to field capacity is taken once when the window opens, then drawn down daily
         if No == 3 and checkOption('irrOffSeasonFill', True):
+            if getattr(self, '_offQuota', None) is None:
+                self._offQuota = np.zeros(self.var.FrostIndex.shape)              # remaining quota this window [m]
+                self._offOpen = np.zeros(self.var.FrostIndex.shape, dtype=bool)   # window state on previous day
             _open = (self.var.FrostIndex > 0.) & (~self.var.FrostDay) & (self.var.fracVegCover[3] > 0.)
-            _need = np.maximum(0., self.var.totAvlWater - readAvlWater)   # 补到田持还差多少 [m]
+            _need = np.maximum(0., self.var.totAvlWater - readAvlWater)           # deficit to field capacity [m]
+            self._offQuota = np.where(_open & (~self._offOpen), _need, self._offQuota)
+            self._offOpen = _open
+            _dose = np.where(_open, np.minimum(np.minimum(self._offQuota, potInf), _need), 0.)
+            self._offQuota = np.maximum(0., self._offQuota - _dose)
             self.var.pot_irrConsumption[3] = np.where(
-                _open & (_need > 0.), np.minimum(_need, potInf), self.var.pot_irrConsumption[3])
+                _dose > 0., _dose, self.var.pot_irrConsumption[3])
         # ---- LAB OFF-SEASON FILL END ----
 
         if "fraction_IncreaseIrrigation_Nonpaddy" in binding:

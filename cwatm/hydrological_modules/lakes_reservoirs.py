@@ -683,6 +683,8 @@ class lakes_reservoirs(object):
         np.put(self.var.lakeStorage, self.var.decompress_LR, lakeStorageC)
         np.put(self.var.resStorage, self.var.decompress_LR, resStorageC)
 
+        # Per-cell switch for Reservoir_releases: 1 = outflow from the release ratio, 0 = default rule
+        self.var.release_switchC = None
         self.var.reservoir_releases_excel_option = False
         if checkOption('reservoir_releases_in_Excel_settings', True):
             if 'Excel_settings_file' in binding:
@@ -792,6 +794,16 @@ class lakes_reservoirs(object):
 
                 self.var.lakeResStorage_release_ratioC = np.compress(self.var.compress_LR,
                                                                      self.var.lakeResStorage_release_ratio)
+
+                # Static per-cell switch, read once. Missing variable -> all cells use the release ratio.
+                if self.var.release_switchC is None:
+                    try:
+                        release_switch_map = readnetcdf2(
+                            'Reservoir_releases', 1,
+                            useDaily='DOY', value='external control')
+                        self.var.release_switchC = np.compress(self.var.compress_LR, release_switch_map) > 0
+                    except Exception:
+                        self.var.release_switchC = np.ones(len(self.var.lakeResStorage_release_ratioC), dtype=bool)
 
             elif self.var.reservoir_releases_excel_option:
                 self.var.lakeResStorage_release_ratioC = self.var.reservoir_releases[dateVar['doy']-1]
@@ -995,10 +1007,13 @@ class lakes_reservoirs(object):
             # This is overridden only in flooding conditions.
 
             if 'Reservoir_releases' in binding:
+                # Outflow from the release ratio (zero where the ratio is not positive)
+                releaseRatioOutflow = np.where(self.var.lakeResStorage_release_ratioC > 0,
+                                               self.var.lakeResStorage_release_ratioC * self.var.reservoirStorageM3C *
+                                               self.var.InvDtSec, 0.)
+                # Cells with switch 0 keep the default rule; flood-level cells always keep the default rule
                 reservoirOutflow = np.where(self.var.reservoirFillC > self.var.floodLimitC, reservoirOutflow,
-                                            np.where(self.var.lakeResStorage_release_ratioC > 0,
-                                            self.var.lakeResStorage_release_ratioC * self.var.reservoirStorageM3C *
-                                            self.var.InvDtSec, 0))
+                                            np.where(self.var.release_switchC, releaseRatioOutflow, reservoirOutflow))
 
             if self.var.reservoir_releases_excel_option:
                 reservoirOutflow = np.where(self.var.reservoirFillC > self.var.floodLimitC, reservoirOutflow,
