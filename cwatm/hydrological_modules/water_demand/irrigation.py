@@ -167,6 +167,9 @@ class waterdemand_irrigation:
         self.var.pot_irrConsumption[No] = np.where(self.var.pot_irrConsumption[No] > self.var.InvCellArea,
                                                    self.var.pot_irrConsumption[No], 0)
         self.var.irrDemand[No] = self.var.pot_irrConsumption[No] / self.var.efficiencyPaddy
+        # LAB SCENARIO SWITCH: irrigation demand multiplier (default absent = 1.0; 0 = no irrigation withdrawal)
+        if 'irrDemandScale' in binding:
+            self.var.irrDemand[No] = self.var.irrDemand[No] * float(binding['irrDemandScale'])
 
         # -----------------
         # irrNonPaddy
@@ -267,6 +270,9 @@ class waterdemand_irrigation:
             self.var.pot_irrConsumption[No] > self.var.minimum_irrigation,
             self.var.pot_irrConsumption[No], 0)
         self.var.irrDemand[No] = self.var.pot_irrConsumption[No] / self.var.efficiencyNonpaddy
+        # LAB SCENARIO SWITCH: irrigation demand multiplier (default absent = 1.0; 0 = no irrigation withdrawal)
+        if 'irrDemandScale' in binding:
+            self.var.irrDemand[No] = self.var.irrDemand[No] * float(binding['irrDemandScale'])
 
         # Sum up irrigation water demand with area fraction
         self.var.irrNonpaddyDemand = self.var.fracVegCover[3] * self.var.irrDemand[3]
