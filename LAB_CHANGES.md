@@ -13,14 +13,16 @@
 git diff upstream/develop -- cwatm/
 ```
 
-**这条命令的输出就是本 fork 的全部偏离**——九个文件、约 270 行，除 P5 的新增读取器（约 200 行）外一屏读完。P5 默认关闭，关闭时行为与上游一致。
+**这条命令的输出就是本 fork 的全部偏离**——十个文件。大头是两处规模较大的新增：P5 的逐日参数读取器（约 200 行）、P6 的 lift 记账（约 175 行）；P7、P8 与 P1/P2/P4 的改动合起来约一百行。
 不需要读历史，不需要信任本文件的叙述，直接看 diff。
 
 由 `python3 tools/check_lab_patches.py` 机器校验，每次合并上游后**必跑**，退出码 0 才可以
 `--ff-only` 落地 `lab/main`。
 
-确切文件集由校验器里的 `EXPECTED_DEVIATION` 持有（P1–P4 四个，加 P5 的五个：
-`data_handling.py`、`globals.py`、`landcoverType.py`、`evaporation.py`、`interception.py`），与上面的叙述不一致时以校验器为准。
+确切文件集由校验器里的 `EXPECTED_DEVIATION` 持有，共十个文件：P1–P4 四个（`irrigation.py`、`soil.py`、
+`water_demand.py`、`inflow.py`），P5 新增五个（`data_handling.py`、`globals.py`、`landcoverType.py`、
+`evaporation.py`、`interception.py`），P7 新增一个（`lakes_reservoirs.py`）。P6 改 `water_demand.py`、
+P8 改 `irrigation.py`，都在已有的文件内。与上面的叙述不一致时以校验器为准。
 
 ---
 

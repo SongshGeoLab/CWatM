@@ -61,6 +61,7 @@ EVAPORATION = "cwatm/hydrological_modules/evaporation.py"
 INTERCEPTION = "cwatm/hydrological_modules/interception.py"
 LANDCOVER_TYPE = "cwatm/hydrological_modules/landcoverType.py"
 GLOBALS = "cwatm/management_modules/globals.py"
+LAKES_RESERVOIRS = "cwatm/hydrological_modules/lakes_reservoirs.py"
 
 # The exact set of files this fork may differ from upstream/develop in.
 UPSTREAM_REF = "upstream/develop"
@@ -68,6 +69,8 @@ EXPECTED_DEVIATION = {
     IRRIGATION, SOIL, WATER_DEMAND, INFLOW,
     # P5, daily crop coefficient and interception capacity
     DATA_HANDLING, EVAPORATION, INTERCEPTION, LANDCOVER_TYPE, GLOBALS,
+    # P7, per-reservoir external control switch
+    LAKES_RESERVOIRS,
 }
 
 CROP_GROUP_TERM = squash("- 0.10 * (5 - self.var.cropGroupNumber)")
@@ -95,6 +98,7 @@ _conflicted = [
         INTERCEPTION,
         LANDCOVER_TYPE,
         GLOBALS,
+        LAKES_RESERVOIRS,
     )
     if re.search(r"^<{7} ", (ROOT / rel).read_text(encoding="utf-8"), re.MULTILINE)
 ]
